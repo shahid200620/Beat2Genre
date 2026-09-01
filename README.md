@@ -1,4 +1,4 @@
-\# Beat2Genre
+# Beat2Genre
 
 
 
@@ -10,7 +10,7 @@ The project explores the dataset, prepares the audio features for machine learni
 
 
 
-\## Project Overview
+## Project Overview
 
 
 
@@ -80,7 +80,7 @@ The project uses the pre-extracted `features\_30\_sec.csv` file rather than proc
 
 
 
-\## Project Structure
+## Project Structure
 
 
 
