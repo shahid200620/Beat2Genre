@@ -1,6 +1,7 @@
 import os
 import sys
 import tempfile
+import io
 
 import joblib
 import librosa
@@ -19,6 +20,30 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+if "features" not in st.session_state:
+    st.session_state.features = None
+
+if "file_name" not in st.session_state:
+    st.session_state.file_name = None
+
+if "audio_bytes" not in st.session_state:
+    st.session_state.audio_bytes = None
+
+if "upload_bytes" not in st.session_state:
+    st.session_state.upload_bytes = None
+
+if "upload_name" not in st.session_state:
+    st.session_state.upload_name = None
+
+if "predicted_genre" not in st.session_state:
+    st.session_state.predicted_genre = None
+
+if "probability_data" not in st.session_state:
+    st.session_state.probability_data = None
+
+if "analysis_error" not in st.session_state:
+    st.session_state.analysis_error = None
 
 MODEL_PATH = "output/best_model.joblib"
 SCALER_PATH = "output/scaler.joblib"
@@ -64,8 +89,7 @@ html, body, [class*="css"] {
 }
 
 [data-testid="stHeader"] {
-    background: rgba(10,11,14,0.85);
-    backdrop-filter: blur(12px);
+    background: transparent;
 }
 
 [data-testid="stToolbar"] {
@@ -417,6 +441,41 @@ button:focus-visible, [tabindex]:focus-visible {
     .section-title { font-size: 1.2rem; }
 }
 
+.analysis-card {
+    padding: 1.25rem;
+    border-radius: 16px;
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    margin-bottom: 1rem;
+}
+
+.analysis-card-title {
+    font-family: 'Sora', sans-serif;
+    font-size: 1rem;
+    font-weight: 700;
+    margin-bottom: 0.4rem;
+}
+
+.analysis-card-text {
+    color: var(--text-1);
+    font-size: 0.84rem;
+    line-height: 1.6;
+}
+
+.page-breadcrumb {
+    display: inline-block;
+    padding: 0.4rem 1rem;
+    border-radius: 999px;
+    background: var(--amber-soft);
+    border: 1px solid rgba(242,169,59,0.35);
+    color: var(--amber);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.78rem;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    white-space: nowrap;
+}
+
 footer {
     visibility: hidden;
 }
@@ -432,6 +491,23 @@ with st.sidebar:
             <div class="brand-tag">Identifies a track's genre from its
             audio signal — rhythm, energy, and tone.</div>
         </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    st.markdown(
+        '<div class="sidebar-note" style="margin-top:0; border-top:none; padding-top:0;">EXPLORE</div>',
+        unsafe_allow_html=True
+    )
+
+    page = st.radio(
+        "Navigate",
+        ["🏠 Prediction", "🎧 Audio Features", "📊 Audio Analysis", "🤖 Model Performance"],
+        label_visibility="collapsed"
+    )
+
+    st.markdown(
+        """
         <div class="spec-list">
             <div class="spec-row"><span>Model</span><span class="mono">Random Forest</span></div>
             <div class="spec-row"><span>Genres</span><span class="mono">10</span></div>
@@ -445,6 +521,18 @@ with st.sidebar:
         """,
         unsafe_allow_html=True
     )
+
+page_titles = {
+    "🏠 Prediction": "Prediction",
+    "🎧 Audio Features": "Audio Features",
+    "📊 Audio Analysis": "Audio Analysis",
+    "🤖 Model Performance": "Model Performance"
+}
+
+st.markdown(
+    f'<div class="page-breadcrumb">BEAT2GENRE / {page_titles[page].upper()}</div>',
+    unsafe_allow_html=True
+)
 
 st.markdown(
     """
@@ -470,92 +558,159 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-st.markdown(
-    '<div class="section-title">Upload a track</div>',
-    unsafe_allow_html=True
-)
-
-st.markdown(
-    '<div class="section-description">Drop in an audio file and '
-    'Beat2Genre extracts its characteristics automatically — no '
-    'technical values to enter by hand.</div>',
-    unsafe_allow_html=True
-)
-
-st.markdown('<div class="upload-zone">', unsafe_allow_html=True)
-
-uploaded_file = st.file_uploader(
-    "Drop a track, or click to browse",
-    type=["wav", "mp3", "m4a", "flac"],
-    help="Supported formats: WAV, MP3, M4A and FLAC."
-)
-
-st.markdown('</div>', unsafe_allow_html=True)
-
-if uploaded_file:
-    file_name = uploaded_file.name
-    file_extension = os.path.splitext(file_name)[1]
-
+if page == "🏠 Prediction":
     st.markdown(
-        '<div class="section-title">Your upload</div>',
+        '<div class="section-title">Upload a track</div>',
         unsafe_allow_html=True
     )
-
-    st.caption(f"Selected file: {file_name}")
-
-    st.audio(uploaded_file)
-
-    with tempfile.NamedTemporaryFile(
-        delete=False,
-        suffix=file_extension
-    ) as temp_file:
-        temp_file.write(uploaded_file.getbuffer())
-        audio_path = temp_file.name
-
-    analyze_track = st.button(
-        "Analyze my track",
-        type="primary",
-        use_container_width=True
-    )
-
-    if analyze_track:
-        try:
-            with st.spinner("Listening to the track and extracting features..."):
-                features = extract_features(audio_path)
-
-                X = pd.DataFrame([features])
-                X_scaled = scaler.transform(X)
-                X_scaled = pd.DataFrame(
-                    X_scaled,
-                    columns=X.columns
-                )
-
-                prediction = model.predict(X_scaled)[0]
-                probabilities = model.predict_proba(X_scaled)[0]
-
-                predicted_genre = label_encoder.inverse_transform(
-                    [prediction]
-                )[0]
-
-                genres = label_encoder.inverse_transform(
-                    model.classes_
-                )
-
-                probability_data = pd.DataFrame({
-                    "Genre": genres,
-                    "Probability": probabilities
-                }).sort_values(
-                    "Probability",
-                    ascending=False
-                )
-
+    
+    if st.session_state.upload_bytes:
+        st.markdown(
+            '<div class="section-description">A track is already loaded '
+            'below. Remove it if you want to analyze a different file.</div>',
+            unsafe_allow_html=True
+        )
+    else:
+        st.markdown(
+            '<div class="section-description">Drop in an audio file and '
+            'Beat2Genre extracts its characteristics automatically — no '
+            'technical values to enter by hand.</div>',
+            unsafe_allow_html=True
+        )
+    
+        st.markdown('<div class="upload-zone">', unsafe_allow_html=True)
+    
+        uploaded_file = st.file_uploader(
+            "Drop a track, or click to browse",
+            type=["wav", "mp3", "m4a", "flac"],
+            help="Supported formats: WAV, MP3, M4A and FLAC."
+        )
+    
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+        if uploaded_file is not None:
+            st.session_state.upload_bytes = uploaded_file.getvalue()
+            st.session_state.upload_name = uploaded_file.name
+            st.rerun()
+    
+    if st.session_state.upload_bytes:
+        file_name = st.session_state.upload_name
+        file_extension = os.path.splitext(file_name)[1]
+    
+        st.markdown(
+            '<div class="section-title">Your upload</div>',
+            unsafe_allow_html=True
+        )
+    
+        upload_info_col, upload_remove_col = st.columns([4, 1])
+    
+        with upload_info_col:
+            st.caption(f"Selected file: {file_name}")
+    
+        with upload_remove_col:
+            remove_file = st.button(
+                "Remove file",
+                use_container_width=True
+            )
+    
+        if remove_file:
+            st.session_state.upload_bytes = None
+            st.session_state.upload_name = None
+            st.session_state.features = None
+            st.session_state.file_name = None
+            st.session_state.audio_bytes = None
+            st.session_state.predicted_genre = None
+            st.session_state.probability_data = None
+            st.session_state.analysis_error = None
+            st.rerun()
+    
+        st.audio(st.session_state.upload_bytes)
+    
+        with tempfile.NamedTemporaryFile(
+            delete=False,
+            suffix=file_extension
+        ) as temp_file:
+            temp_file.write(st.session_state.upload_bytes)
+            audio_path = temp_file.name
+    
+        analyze_track = st.button(
+            "Analyze my track",
+            type="primary",
+            use_container_width=True
+        )
+    
+        if analyze_track:
+            try:
+                with st.spinner("Listening to the track and extracting features..."):
+                    features = extract_features(audio_path)
+    
+                    X = pd.DataFrame([features])
+                    X_scaled = scaler.transform(X)
+                    X_scaled = pd.DataFrame(
+                        X_scaled,
+                        columns=X.columns
+                    )
+    
+                    prediction = model.predict(X_scaled)[0]
+                    probabilities = model.predict_proba(X_scaled)[0]
+    
+                    predicted_genre = label_encoder.inverse_transform(
+                        [prediction]
+                    )[0]
+    
+                    genres = label_encoder.inverse_transform(
+                        model.classes_
+                    )
+    
+                    probability_data = pd.DataFrame({
+                        "Genre": genres,
+                        "Probability": probabilities
+                    }).sort_values(
+                        "Probability",
+                        ascending=False
+                    )
+    
+                st.session_state.features = features
+                st.session_state.file_name = file_name
+                st.session_state.audio_bytes = st.session_state.upload_bytes
+                st.session_state.predicted_genre = predicted_genre
+                st.session_state.probability_data = probability_data
+                st.session_state.analysis_error = None
+    
+            except Exception as error:
+                st.session_state.analysis_error = str(error)
+    
+            finally:
+                if os.path.exists(audio_path):
+                    os.remove(audio_path)
+    
+            st.rerun()
+    
+        if st.session_state.analysis_error:
+            st.error(
+                "Beat2Genre couldn't read this file. Try a different "
+                "audio file."
+            )
+    
+            st.caption(f"Details: {st.session_state.analysis_error}")
+    
+        has_result = (
+            st.session_state.predicted_genre is not None
+            and st.session_state.file_name == file_name
+        )
+    
+        if has_result:
+            features = st.session_state.features
+            predicted_genre = st.session_state.predicted_genre
+            probability_data = st.session_state.probability_data
+    
             top_probability = probability_data.iloc[0]["Probability"]
-
+    
             st.markdown(
                 '<div class="section-title">Result</div>',
                 unsafe_allow_html=True
             )
-
+    
             st.markdown(
                 f"""
                 <div class="result-card">
@@ -569,11 +724,11 @@ if uploaded_file:
                 """,
                 unsafe_allow_html=True
             )
-
+    
             st.write("")
-
+    
             stat1, stat2, stat3 = st.columns(3)
-
+    
             with stat1:
                 st.markdown(
                     f"""
@@ -584,7 +739,7 @@ if uploaded_file:
                     """,
                     unsafe_allow_html=True
                 )
-
+    
             with stat2:
                 st.markdown(
                     """
@@ -595,7 +750,7 @@ if uploaded_file:
                     """,
                     unsafe_allow_html=True
                 )
-
+    
             with stat3:
                 st.markdown(
                     """
@@ -606,34 +761,34 @@ if uploaded_file:
                     """,
                     unsafe_allow_html=True
                 )
-
+    
             st.success(
                 f"Beat2Genre classified this track as "
                 f"{predicted_genre.title()}."
             )
-
+    
             st.markdown(
                 '<div class="section-title">Genre breakdown</div>',
                 unsafe_allow_html=True
             )
-
+    
             st.markdown(
                 '<div class="section-description">How the track scores '
                 'against all ten supported genres. Higher means a '
                 'stronger match to that genre\'s audio pattern.</div>',
                 unsafe_allow_html=True
             )
-
+    
             probability_values = probability_data["Probability"].tolist()
             probability_genres = probability_data["Genre"].tolist()
-
+    
             for position, (genre, probability) in enumerate(
                 zip(probability_genres, probability_values),
                 start=1
             ):
                 percentage = probability * 100
                 rank_class = "top-rank" if position == 1 else ""
-
+    
                 st.markdown(
                     f"""
                     <div class="probability-row {rank_class}">
@@ -651,12 +806,12 @@ if uploaded_file:
                     """,
                     unsafe_allow_html=True
                 )
-
+    
             second_genre = probability_data.iloc[1]["Genre"]
             second_probability = probability_data.iloc[1]["Probability"]
-
+    
             difference = top_probability - second_probability
-
+    
             if difference >= 0.20:
                 interpretation = (
                     f"The model has a clear preference for "
@@ -675,23 +830,23 @@ if uploaded_file:
                     f"so the track contains characteristics associated with "
                     f"multiple genres."
                 )
-
+    
             st.info(interpretation)
-
+    
             st.markdown(
                 '<div class="section-title">Audio profile</div>',
                 unsafe_allow_html=True
             )
-
+    
             st.markdown(
                 '<div class="section-description">The main measurements '
                 'extracted from your track — the numerical signals the '
                 'classifier used, rather than manually entered values.</div>',
                 unsafe_allow_html=True
             )
-
+    
             profile_columns = st.columns(3)
-
+    
             profile_data = [
                 ("Tempo", f"{features['tempo']:.1f} BPM"),
                 ("RMS energy", f"{features['rms_mean']:.4f}"),
@@ -700,7 +855,7 @@ if uploaded_file:
                 ("Zero crossing rate", f"{features['zero_crossing_rate_mean']:.4f}"),
                 ("Chroma", f"{features['chroma_stft_mean']:.4f}")
             ]
-
+    
             for index, (label, value) in enumerate(profile_data):
                 with profile_columns[index % 3]:
                     st.markdown(
@@ -712,251 +867,516 @@ if uploaded_file:
                         """,
                         unsafe_allow_html=True
                     )
+        elif not st.session_state.analysis_error:
+            st.info(
+                "Click \"Analyze my track\" to see the genre prediction "
+                "for this file."
+            )
+
+if page == "🎧 Audio Features":
+    st.markdown(
+        '<div class="section-title">🎧 Audio Features</div>',
+        unsafe_allow_html=True
+    )
+
+    st.markdown(
+        '<div class="section-description">A complete breakdown of the 58 numerical characteristics extracted directly from your uploaded audio.</div>',
+        unsafe_allow_html=True
+    )
+
+    if st.session_state.features is None:
+        st.info("Upload and analyze a track from the Prediction page first.")
+    else:
+        features = st.session_state.features
+
+        st.markdown(
+            f"""
+            <div class="result-card">
+                <div class="result-label">Analyzed track</div>
+                <div class="result-genre" style="font-size:1.8rem;">
+                    {st.session_state.file_name}
+                </div>
+                <div class="result-description">
+                    58 audio characteristics extracted for classification
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+        st.write("")
+
+        basic_features = [
+            "length",
+            "tempo"
+        ]
+
+        energy_features = [
+            "rms_mean",
+            "rms_var"
+        ]
+
+        spectral_features = [
+            "spectral_centroid_mean",
+            "spectral_centroid_var",
+            "spectral_bandwidth_mean",
+            "spectral_bandwidth_var",
+            "rolloff_mean",
+            "rolloff_var",
+            "zero_crossing_rate_mean",
+            "zero_crossing_rate_var"
+        ]
+
+        harmonic_features = [
+            "chroma_stft_mean",
+            "chroma_stft_var",
+            "harmony_mean",
+            "harmony_var",
+            "perceptr_mean",
+            "perceptr_var"
+        ]
+
+        mfcc_features = [
+            key for key in features
+            if key.startswith("mfcc")
+        ]
+
+        categories = [
+            ("🎵 Basic & Rhythm", basic_features),
+            ("⚡ Energy", energy_features),
+            ("🌈 Spectral", spectral_features),
+            ("🎼 Harmonic", harmonic_features),
+            ("🧠 MFCC", mfcc_features)
+        ]
+
+        for category_name, category_features in categories:
+            st.markdown(
+                f'<div class="section-title">{category_name}</div>',
+                unsafe_allow_html=True
+            )
+
+            rows = []
+
+            for feature_name in category_features:
+                if feature_name in features:
+                    rows.append({
+                        "Feature": feature_name.replace("_", " ").title(),
+                        "Technical Name": feature_name,
+                        "Value": f"{float(features[feature_name]):.6f}"
+                    })
+
+            st.dataframe(
+                pd.DataFrame(rows),
+                use_container_width=True,
+                hide_index=True
+            )
+
+if page == "📊 Audio Analysis":
+    st.markdown(
+        '<div class="section-title">📊 Audio Analysis</div>',
+        unsafe_allow_html=True
+    )
+
+    st.markdown(
+        '<div class="section-description">Visual analysis of the acoustic characteristics extracted from your uploaded track.</div>',
+        unsafe_allow_html=True
+    )
+
+    if st.session_state.features is None:
+        st.info("Upload and analyze a track from the Prediction page first.")
+    else:
+        features = st.session_state.features
+
+        if st.session_state.audio_bytes:
+            audio_data, sample_rate = librosa.load(
+                io.BytesIO(st.session_state.audio_bytes),
+                sr=None,
+                mono=True
+            )
+
+            duration = len(audio_data) / sample_rate
+            time_axis = np.linspace(0, duration, len(audio_data))
 
             st.markdown(
-                '<div class="section-title">📊 Track Analytics</div>',
+                '<div class="section-title">〰️ Waveform</div>',
                 unsafe_allow_html=True
             )
 
             st.markdown(
-                '<div class="section-description">A visual look at how the '
-                'track compares across genres and the audio characteristics '
-                'used during classification.</div>',
+                """
+                <div class="analysis-card">
+                    <div class="analysis-card-title">Audio Signal</div>
+                    <div class="analysis-card-text">
+                        The waveform shows how the amplitude of the uploaded audio
+                        changes over time. Peaks represent stronger signal activity,
+                        while lower regions represent quieter portions.
+                    </div>
+                </div>
+                """,
                 unsafe_allow_html=True
             )
 
-            chart_col1, chart_col2 = st.columns(2)
+            fig, ax = plt.subplots(figsize=(11, 4))
 
-            with chart_col1:
-                fig, ax = plt.subplots(figsize=(7, 5))
+            ax.plot(time_axis, audio_data)
 
-                chart_data = probability_data.sort_values(
-                    "Probability",
-                    ascending=True
-                )
+            ax.set_xlabel("Time (seconds)")
+            ax.set_ylabel("Amplitude")
+            ax.set_title("Waveform of Uploaded Audio")
+            ax.grid(alpha=0.15)
 
-                ax.barh(
-                    chart_data["Genre"].str.title(),
-                    chart_data["Probability"] * 100
-                )
-
-                ax.set_xlabel("Model confidence (%)")
-                ax.set_title("Genre Probability")
-                ax.grid(axis="x", alpha=0.15)
-
-                for index, value in enumerate(
-                    chart_data["Probability"] * 100
-                ):
-                    ax.text(
-                        value + 0.5,
-                        index,
-                        f"{value:.1f}%",
-                        va="center",
-                        fontsize=9
-                    )
-
-                ax.set_xlim(0, max(100, chart_data["Probability"].max() * 100 + 10))
-                fig.tight_layout()
-
-                st.pyplot(fig, use_container_width=True)
-                plt.close(fig)
-
-            with chart_col2:
-                feature_names = [
-                    "Tempo",
-                    "RMS Energy",
-                    "Spectral Centroid",
-                    "Spectral Bandwidth",
-                    "Zero Crossing Rate",
-                    "Chroma"
-                ]
-
-                feature_values = [
-                    features["tempo"],
-                    features["rms_mean"],
-                    features["spectral_centroid_mean"],
-                    features["spectral_bandwidth_mean"],
-                    features["zero_crossing_rate_mean"],
-                    features["chroma_stft_mean"]
-                ]
-
-                normalized_values = []
-
-                for value in feature_values:
-                    maximum = max(abs(value), 1)
-                    normalized_values.append(
-                        abs(value) / maximum
-                    )
-
-                fig, ax = plt.subplots(figsize=(7, 5))
-
-                ax.barh(
-                    feature_names[::-1],
-                    normalized_values[::-1]
-                )
-
-                ax.set_xlabel("Relative signal level")
-                ax.set_title("Audio Feature Profile")
-                ax.grid(axis="x", alpha=0.15)
-
-                fig.tight_layout()
-
-                st.pyplot(fig, use_container_width=True)
-                plt.close(fig)
-
-            st.markdown(
-                '<div class="section-title">🏆 Model Benchmark</div>',
-                unsafe_allow_html=True
-            )
-
-            benchmark_display = benchmark.copy()
-
-            benchmark_display["model_name"] = (
-                benchmark_display["model_name"]
-                .str.replace("Logistic Regression", "Logistic Regression")
-            )
-
-            benchmark_col1, benchmark_col2 = st.columns(2)
-
-            with benchmark_col1:
-                fig, ax = plt.subplots(figsize=(7, 5))
-
-                ax.bar(
-                    benchmark_display["model_name"],
-                    benchmark_display["accuracy"] * 100
-                )
-
-                ax.set_ylabel("Accuracy (%)")
-                ax.set_title("Model Accuracy")
-                ax.set_ylim(0, 100)
-                ax.grid(axis="y", alpha=0.15)
-
-                for index, value in enumerate(
-                    benchmark_display["accuracy"] * 100
-                ):
-                    ax.text(
-                        index,
-                        value + 1,
-                        f"{value:.1f}%",
-                        ha="center",
-                        fontsize=9
-                    )
-
-                plt.xticks(rotation=15)
-                fig.tight_layout()
-
-                st.pyplot(fig, use_container_width=True)
-                plt.close(fig)
-
-            with benchmark_col2:
-                fig, ax = plt.subplots(figsize=(7, 5))
-
-                ax.bar(
-                    benchmark_display["model_name"],
-                    benchmark_display["f1_score"] * 100
-                )
-
-                ax.set_ylabel("Macro F1-score (%)")
-                ax.set_title("Model F1-score")
-                ax.set_ylim(0, 100)
-                ax.grid(axis="y", alpha=0.15)
-
-                for index, value in enumerate(
-                    benchmark_display["f1_score"] * 100
-                ):
-                    ax.text(
-                        index,
-                        value + 1,
-                        f"{value:.1f}%",
-                        ha="center",
-                        fontsize=9
-                    )
-
-                plt.xticks(rotation=15)
-                fig.tight_layout()
-
-                st.pyplot(fig, use_container_width=True)
-                plt.close(fig)
-
-            st.markdown(
-                '<div class="section-title">📈 Benchmark Overview</div>',
-                unsafe_allow_html=True
-            )
-
-            benchmark_chart = benchmark_display.set_index(
-                "model_name"
-            )[["accuracy", "precision", "recall", "f1_score"]].copy()
-
-            benchmark_chart = benchmark_chart * 100
-
-            fig, ax = plt.subplots(figsize=(11, 5))
-
-            benchmark_chart.plot(
-                kind="bar",
-                ax=ax
-            )
-
-            ax.set_ylabel("Score (%)")
-            ax.set_xlabel("Model")
-            ax.set_title("Classification Model Performance")
-            ax.set_ylim(0, 100)
-            ax.grid(axis="y", alpha=0.15)
-            ax.legend(
-                title="Metric",
-                loc="lower right"
-            )
-
-            plt.xticks(rotation=15)
             fig.tight_layout()
 
             st.pyplot(fig, use_container_width=True)
             plt.close(fig)
 
+        st.markdown(
+            f"""
+            <div class="result-card">
+                <div class="result-label">Analyzed track</div>
+                <div class="result-genre" style="font-size:1.8rem;">
+                    {st.session_state.file_name}
+                </div>
+                <div class="result-description">
+                    Visual representation of the extracted audio characteristics
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+        st.markdown(
+            '<div class="section-title">🌈 Spectral Profile</div>',
+            unsafe_allow_html=True
+        )
+
+        st.markdown(
+            """
+            <div class="analysis-card">
+                <div class="analysis-card-title">What are spectral features?</div>
+                <div class="analysis-card-text">
+                    These measurements describe how energy is distributed across the
+                    frequency spectrum of the audio. They help the model distinguish
+                    different tonal and textural characteristics between genres.
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+        spectral_names = [
+            "Spectral Centroid",
+            "Spectral Bandwidth",
+            "Spectral Rolloff",
+            "Zero Crossing Rate"
+        ]
+
+        spectral_values = [
+            features["spectral_centroid_mean"],
+            features["spectral_bandwidth_mean"],
+            features["rolloff_mean"],
+            features["zero_crossing_rate_mean"]
+        ]
+
+        fig, ax = plt.subplots(figsize=(10, 5))
+
+        ax.barh(spectral_names[::-1], spectral_values[::-1])
+
+        ax.set_xlabel("Feature Value")
+        ax.set_title("Spectral Characteristics")
+        ax.grid(axis="x", alpha=0.15)
+
+        fig.tight_layout()
+
+        st.pyplot(fig, use_container_width=True)
+        plt.close(fig)
+
+        st.markdown(
+            '<div class="section-title">⚡ Energy & Rhythm</div>',
+            unsafe_allow_html=True
+        )
+
+        st.markdown(
+            """
+            <div class="analysis-card">
+                <div class="analysis-card-title">What do these measurements tell us?</div>
+                <div class="analysis-card-text">
+                    Tempo represents the estimated beats per minute, while RMS energy
+                    describes the overall strength of the audio signal. Chroma captures
+                    the distribution of musical pitch classes.
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+        energy_col1, energy_col2, energy_col3 = st.columns(3)
+
+        with energy_col1:
             st.markdown(
-                '<div class="section-title">📋 Performance Summary</div>',
+                f"""
+                <div class="stat-card">
+                    <div class="stat-label">Tempo</div>
+                    <div class="stat-value mono">{features["tempo"]:.1f} BPM</div>
+                </div>
+                """,
                 unsafe_allow_html=True
             )
 
-            performance_table = benchmark_display.copy()
-
-            performance_table["accuracy"] = (
-                performance_table["accuracy"] * 100
-            ).round(2)
-
-            performance_table["precision"] = (
-                performance_table["precision"] * 100
-            ).round(2)
-
-            performance_table["recall"] = (
-                performance_table["recall"] * 100
-            ).round(2)
-
-            performance_table["f1_score"] = (
-                performance_table["f1_score"] * 100
-            ).round(2)
-
-            performance_table.columns = [
-                "Model",
-                "Accuracy (%)",
-                "Precision (%)",
-                "Recall (%)",
-                "F1-score (%)"
-            ]
-
-            st.dataframe(
-                performance_table,
-                use_container_width=True,
-                hide_index=True
+        with energy_col2:
+            st.markdown(
+                f"""
+                <div class="stat-card">
+                    <div class="stat-label">RMS Energy</div>
+                    <div class="stat-value mono">{features["rms_mean"]:.5f}</div>
+                </div>
+                """,
+                unsafe_allow_html=True
             )
 
-        except Exception as error:
-            st.error(
-                "Beat2Genre couldn't read this file. Try a different "
-                "audio file."
+        with energy_col3:
+            st.markdown(
+                f"""
+                <div class="stat-card">
+                    <div class="stat-label">Chroma</div>
+                    <div class="stat-value mono">{features["chroma_stft_mean"]:.5f}</div>
+                </div>
+                """,
+                unsafe_allow_html=True
             )
 
-            st.caption(f"Details: {error}")
+        st.markdown(
+            '<div class="section-title">🧠 MFCC Profile</div>',
+            unsafe_allow_html=True
+        )
 
-        finally:
-            if os.path.exists(audio_path):
-                os.remove(audio_path)
+        st.markdown(
+            """
+            <div class="analysis-card">
+                <div class="analysis-card-title">Why MFCCs matter</div>
+                <div class="analysis-card-text">
+                    Mel-Frequency Cepstral Coefficients capture important characteristics
+                    of the audio spectrum. Beat2Genre uses 20 MFCC coefficients, with
+                    both mean and variance contributing to the feature representation.
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+        mfcc_names = []
+        mfcc_values = []
+
+        for index in range(1, 21):
+            name = f"mfcc{index}_mean"
+            mfcc_names.append(f"MFCC {index}")
+            mfcc_values.append(features[name])
+
+        fig, ax = plt.subplots(figsize=(10, 6))
+
+        ax.bar(mfcc_names, mfcc_values)
+
+        ax.set_xlabel("MFCC Coefficient")
+        ax.set_ylabel("Mean Value")
+        ax.set_title("20 MFCC Coefficients")
+        ax.grid(axis="y", alpha=0.15)
+
+        plt.xticks(rotation=45)
+
+        fig.tight_layout()
+
+        st.pyplot(fig, use_container_width=True)
+        plt.close(fig)
+
+if page == "🤖 Model Performance":
+    st.markdown(
+        '<div class="section-title">🤖 Model Performance</div>',
+        unsafe_allow_html=True
+    )
+
+    st.markdown(
+        '<div class="section-description">Benchmark results from the classification models evaluated during Beat2Genre development.</div>',
+        unsafe_allow_html=True
+    )
+
+    best_row = benchmark.loc[benchmark["f1_score"].idxmax()]
+
+    st.markdown(
+        f"""
+        <div class="result-card">
+            <div class="result-label">Selected classifier</div>
+            <div class="result-genre" style="font-size:2rem;">
+                {best_row["model_name"]}
+            </div>
+            <div class="result-description">
+                Selected because it achieved the highest macro F1-score
+                across the evaluated models.
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    st.write("")
+
+    model_col1, model_col2, model_col3 = st.columns(3)
+
+    with model_col1:
+        st.markdown(
+            f"""
+            <div class="stat-card">
+                <div class="stat-label">Accuracy</div>
+                <div class="stat-value mono">{best_row["accuracy"]:.1%}</div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+    with model_col2:
+        st.markdown(
+            f"""
+            <div class="stat-card">
+                <div class="stat-label">Macro F1</div>
+                <div class="stat-value mono">{best_row["f1_score"]:.1%}</div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+    with model_col3:
+        st.markdown(
+            f"""
+            <div class="stat-card">
+                <div class="stat-label">Models Tested</div>
+                <div class="stat-value mono">{len(benchmark)}</div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+    st.markdown(
+        '<div class="section-title">📊 Accuracy Comparison</div>',
+        unsafe_allow_html=True
+    )
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+
+    values = benchmark["accuracy"] * 100
+
+    ax.bar(
+        benchmark["model_name"],
+        values
+    )
+
+    ax.set_ylabel("Accuracy (%)")
+    ax.set_ylim(0, 100)
+    ax.set_title("Classification Accuracy")
+    ax.grid(axis="y", alpha=0.15)
+
+    for index, value in enumerate(values):
+        ax.text(
+            index,
+            value + 1,
+            f"{value:.1f}%",
+            ha="center",
+            fontsize=9
+        )
+
+    plt.xticks(rotation=15)
+
+    fig.tight_layout()
+
+    st.pyplot(fig, use_container_width=True)
+    plt.close(fig)
+
+    st.markdown(
+        '<div class="section-title">🎯 Macro F1 Comparison</div>',
+        unsafe_allow_html=True
+    )
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+
+    values = benchmark["f1_score"] * 100
+
+    ax.bar(
+        benchmark["model_name"],
+        values
+    )
+
+    ax.set_ylabel("Macro F1-score (%)")
+    ax.set_ylim(0, 100)
+    ax.set_title("Macro F1-score by Model")
+    ax.grid(axis="y", alpha=0.15)
+
+    for index, value in enumerate(values):
+        ax.text(
+            index,
+            value + 1,
+            f"{value:.1f}%",
+            ha="center",
+            fontsize=9
+        )
+
+    plt.xticks(rotation=15)
+
+    fig.tight_layout()
+
+    st.pyplot(fig, use_container_width=True)
+    plt.close(fig)
+
+    st.markdown(
+        '<div class="section-title">📈 Complete Benchmark</div>',
+        unsafe_allow_html=True
+    )
+
+    benchmark_display = benchmark.copy()
+
+    benchmark_display["accuracy"] = (
+        benchmark_display["accuracy"] * 100
+    ).round(2)
+
+    benchmark_display["precision"] = (
+        benchmark_display["precision"] * 100
+    ).round(2)
+
+    benchmark_display["recall"] = (
+        benchmark_display["recall"] * 100
+    ).round(2)
+
+    benchmark_display["f1_score"] = (
+        benchmark_display["f1_score"] * 100
+    ).round(2)
+
+    benchmark_display.columns = [
+        "Model",
+        "Accuracy (%)",
+        "Precision (%)",
+        "Recall (%)",
+        "Macro F1 (%)"
+    ]
+
+    st.dataframe(
+        benchmark_display,
+        use_container_width=True,
+        hide_index=True
+    )
+
+    st.markdown(
+        '<div class="section-title">💡 Model Selection</div>',
+        unsafe_allow_html=True
+    )
+
+    st.markdown(
+        """
+        <div class="analysis-card">
+            <div class="analysis-card-title">Why Random Forest?</div>
+            <div class="analysis-card-text">
+                Random Forest achieved the highest macro F1-score among the
+                evaluated models. Macro F1 gives equal importance to each
+                genre, making it a suitable metric for comparing performance
+                across the ten music classes.
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
